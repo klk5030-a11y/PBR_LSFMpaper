@@ -86,8 +86,8 @@ zspan = linspace(0, L, nz);
 % 3. Increase mesh size when numerical instabilities are observed or fails at t = 0 and z = 0
 
 Jred = JPat_red(); Jox = JPat_ox();
-ODEoptions_red = odeset('RelTol',1e-8, 'AbsTol', 1e-12, 'JPattern', Jred);
-ODEoptions_ox = odeset('RelTol',1e-8, 'AbsTol', 1e-12, 'JPattern', Jox);
+    ODEoptions_red = odeset('RelTol',1e-8, 'AbsTol', 1e-12, 'JPattern', Jred, 'NonNegative', 1:(nz*nvar));
+    ODEoptions_ox = odeset('RelTol',1e-8, 'AbsTol', 1e-12, 'JPattern', Jox, 'NonNegative', 1:(nz*nvar));
 
 P_eq = 9.38e-8*ones(nz, 1);
 IC_delta = polyf(P_eq, coeff); 
@@ -308,7 +308,8 @@ function dydt = ode_red(t, x, BC)
         end
         idx = (k-1)*nz;
         if k == 1                                                                               % oxygen carrier source term.
-            dydt(1:nz) = rxn_coeff(k)*k0.*sigf(delta_diff(1:nz), 1e3).*delta_diff(1:nz);
+            reactant_limiter = sigf(yCO(1:nz)-1e-10, 1e10);
+            dydt(1:nz) = rxn_coeff(k)*k0.*sigf(delta_diff(1:nz), 1e3).*delta_diff(1:nz).*reactant_limiter;
         else
             dxdz = [(x(idx+1)-BC(k)); diff(x(idx+1:idx+nz))]/dz;                                % Convection term
             d2xdz2 = [0; diff(x(idx+1:idx+nz), 2); 0]/dz2;                                      % Diffusion term - No diffusional flux at boundary         
@@ -332,7 +333,8 @@ function dydt = ode_ox(t, x, BC)
         end
         idx = (k-1)*nz;
         if k == 1                                                                                % k : index of species (delta, CO, CO2, H2, H2O, O2)
-            dydt(idx+1:idx+nz) = rxn_coeff(k)*k0.*sigf(delta_diff(1:nz), 1e3).*delta_diff(1:nz);
+            reactant_limiter = sigf(yH2O(1:nz)-1e-10, 1e10);
+            dydt(idx+1:idx+nz) = rxn_coeff(k)*k0.*sigf(delta_diff(1:nz), 1e3).*delta_diff(1:nz).*reactant_limiter;
         else
             dxdz = [diff(x(idx+1:idx+nz)); (BC(k)-x(idx+nz))]/dz;                                % Convection term
             d2xdz2 = [0; diff(x(idx+1:idx+nz), 2); 0]/dz2;                                       % Diffusion term - No diffusional flux at boundary         
@@ -361,14 +363,16 @@ function [sum_solid_red, sum_solid_ox, sum_gas_red, sum_gas_ox] = recovery_ratio
 end
 
 function pO2 = water_pO2(yH2O, yH2)
-    pO2 = (P).*(Kw.*yH2O./yH2).^2;
+    y_floor = 1e-16;
+    pO2 = (P).*(Kw.*max(yH2O, y_floor)./max(yH2, y_floor)).^2;
 end
 function yH2O = water_yH2O(pO2)
     lhs = (pO2./P).^0.5./Kw;
     yH2O = yH.*lhs./(lhs+1);
 end
 function pO2 = carbon_pO2(yCO, yCO2)
-    pO2 = (P).*(Kc.*yCO2./yCO).^2;
+    y_floor = 1e-16;
+    pO2 = (P).*(Kc.*max(yCO2, y_floor)./max(yCO, y_floor)).^2;
 %     for i = 1:nz
 %         if yCO(i) < 1e-5
 %             pO2(i) = 1e-7;
@@ -401,6 +405,7 @@ function pO2 = CeO2_pO2(delta_eq)
 end
 
 function delta_eq = polyf(pO2, coeff)
+    pO2 = min(max(pO2, 1e-23), 1);
     lpO2 = log10(pO2)/10;
     delta_eq = coeff(1).*lpO2.^5 +coeff(2).*lpO2.^4 +coeff(3).*lpO2.^3 +coeff(4).*lpO2.^2 +coeff(5).*lpO2 +coeff(6); 
 end
